@@ -1,0 +1,17 @@
+{
+  "project_name": "context-trio",
+  "global_phase": "planning",
+  "current_task": null,
+  "task_queue": [],
+  "completed_tasks": [],
+  "active_constraints": {
+    "language": ["Python 3.12+", "TypeScript 5.5+"],
+    "style": {"python": "black", "typescript": "prettier"},
+    "testing": {"framework": ["pytest", "jest"], "min_coverage": 80},
+    "typing": "strict"
+  },
+  "reasoning_logs": [],
+  "known_issues": [],
+  "last_updated_by": "architect",
+  "last_updated_at": "2026-02-11T00:00:00Z"
+}
