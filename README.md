@@ -1,4 +1,5 @@
 # context-trio
+<img width="2048" height="2048" alt="context-trio" src="https://github.com/user-attachments/assets/e695bc7d-7da3-4b54-94cf-fe5179af65ed" />
 
 **Triad Orchestration System** — 3개의 AI 에이전트가 팀으로 협업하는 소프트웨어 개발 오케스트레이션 프레임워크.
 
