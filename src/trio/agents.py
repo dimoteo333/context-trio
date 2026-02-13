@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+import threading
 from pathlib import Path
 
 from .config import AgentConfig
@@ -28,6 +30,8 @@ def _run_agent(
     remove_env_keys: list[str] | None = None,
 ) -> str:
     """Run an agent CLI command and return its stdout.
+
+    Streams output in real-time to show permission prompts to the user.
 
     Args:
         config: Agent configuration (command, args, env overrides).
@@ -57,28 +61,53 @@ def _run_agent(
         cmd.extend(extra_args)
     cmd.append(prompt)
 
+    # Use Popen for real-time output streaming
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,  # Merge stderr to stdout
+        text=True,
+        bufsize=1,  # Line buffered
+        env=env,
+        cwd=Path.cwd(),
+    )
+
+    # Collect output for return value
+    output_lines = []
+
+    def stream_output():
+        """Read and print output lines in real-time."""
+        try:
+            for line in iter(process.stdout.readline, ''):
+                if line:
+                    output_lines.append(line)
+                    # Print directly to show permission prompts
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+        except Exception:
+            pass
+
+    # Start streaming thread
+    streamer = threading.Thread(target=stream_output, daemon=True)
+    streamer.start()
+
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
-            cwd=Path.cwd(),
-        )
+        # Wait for process with timeout
+        returncode = process.wait(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
+        process.kill()
         raise AgentTimeoutError(config.name, timeout) from exc
-    except FileNotFoundError as exc:
-        raise AgentInvocationError(
-            config.name, -1, f"Command not found: {config.command}"
-        ) from exc
+    finally:
+        # Wait for streamer to finish
+        streamer.join(timeout=1)
 
-    if result.returncode != 0:
+    if returncode != 0:
+        stderr_output = ''.join(output_lines)
         raise AgentInvocationError(
-            config.name, result.returncode, result.stderr
+            config.name, returncode, stderr_output
         )
 
-    return result.stdout
+    return ''.join(output_lines)
 
 
 def invoke_architect(prompt: str, config: AgentConfig) -> str:

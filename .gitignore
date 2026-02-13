@@ -39,3 +39,5 @@ docs/logs/*.json
 
 # Trio runtime artifacts
 .trio/
+
+.claude/

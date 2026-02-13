@@ -34,6 +34,7 @@ class TrioConfig(BaseModel):
     auditor: AgentConfig
     auto_commit: bool = True
     auto_push: bool = True
+    permission_mode: str = "skip-all"
 
 
 # ---------------------------------------------------------------------------
@@ -202,10 +203,44 @@ def run_first_time_setup() -> TrioConfig:
 
         selections[role] = agent_cfg
 
+    # Permission mode selection (only for Claude-based implementers)
+    impl_cfg = selections["implement"]
+    permission_mode = "skip-all"
+
+    if impl_cfg.command == "claude":
+        perm_choice = questionary.select(
+            "Implementer 파일 쓰기 권한 모드를 선택하세요",
+            choices=[
+                "전체 허용 (--dangerously-skip-permissions)",
+                "도구 제한 (--allowedTools)",
+            ],
+            default="전체 허용 (--dangerously-skip-permissions)",
+        ).ask()
+
+        if perm_choice is None:
+            raise KeyboardInterrupt
+
+        if "도구 제한" in perm_choice:
+            permission_mode = "allowed-tools"
+            impl_cfg.default_args.extend([
+                "--allowedTools",
+                "Edit,Write,Read,Bash,Glob,Grep",
+            ])
+            console.print(
+                "  [dim]허용 도구: Edit, Write, Read, Bash, Glob, Grep[/dim]"
+            )
+        else:
+            permission_mode = "skip-all"
+            impl_cfg.default_args.append("--dangerously-skip-permissions")
+            console.print(
+                "  [dim]모든 도구 사용이 자동 허용됩니다.[/dim]"
+            )
+
     config = TrioConfig(
         architect=selections["plan"],
         implementer=selections["implement"],
         auditor=selections["review"],
+        permission_mode=permission_mode,
     )
 
     save_config(config)
