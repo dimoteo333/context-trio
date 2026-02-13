@@ -51,6 +51,35 @@ trio init --name my-project
 
 context-trio는 **plan → implement → review** 사이클을 따릅니다:
 
+### 자동화된 워크플로우 (권장)
+
+```bash
+trio task "사용자 인증 시스템 구현"
+```
+
+이 명령 하나로 전체 파이프라인이 자동으로 실행됩니다:
+
+```
+User Request
+    │
+    ▼
+┌──────────────┐     ┌──────────────┐     ┌────────────┐     ┌──────────┐
+│ Auto Plan   │────▶│Auto Implement│────▶│Auto Review │────▶│ approved │
+│ (Architect) │     │ (Implementer)│     │ (Auditor)   │     │          │
+└──────────────┘     └──────────────┘     └────────────┘     └──────────┘
+                                            │
+                                            │ (rejected)
+                                            ▼
+                                      ┌──────────────┐
+                                      │ Architect    │ (재설계)
+                                      │              │
+                                      └──────────────┘
+```
+
+### 수동 워크플로우
+
+각 단계를 수동으로 제어하려면:
+
 ```
 User Request
     │
@@ -98,6 +127,36 @@ trio review --task-id TASK-001
 
 생성된 프롬프트를 Auditor 에이전트(Gemini)에 입력합니다.
 
+## 자동화된 오케스트레이션
+
+### `trio task` — 원샷 파이프라인
+
+가장 간단한 방법으로 전체 workflow를 실행합니다:
+
+```bash
+trio task "JWT 기반 사용자 인증 시스템 구현"
+```
+
+**과정:**
+
+1. **Architect 에이전트가 3단계 계획 생성**
+   - Task 분해
+   - 실행 계획 수립
+   - 승인 기준 정의
+
+2. **Implementer 에이전트가 구현**
+   - 코드 작성
+   - 테스트 작성
+   - 검증 실행
+
+3. **Auditor 에이전트가 리뷰**
+   - 코드 품질 검사
+   - 보안 점검
+   - 승인/거부 결정
+
+4. **자동 Git 커밋** (기본 활성화)
+   - `--no-commit` 옵션으로 비활성화 가능
+
 ### Step 5: Transition
 
 Auditor가 승인하면:
@@ -116,6 +175,7 @@ trio transition rejected --agent auditor
 
 | Command | Description |
 |---|---|
+| `trio task <description>` | **전체 파이프라인 자동 실행** (Plan → Implement → Review) |
 | `trio status` | 현재 phase, task queue, 최근 activity 표시 |
 | `trio plan <request>` | Architect용 시스템 프롬프트 생성 |
 | `trio implement [--task-id ID]` | Implementer용 시스템 프롬프트 생성 |
@@ -142,7 +202,10 @@ context-trio/
 │   ├── context.py         # CONTEXT.json 관리자
 │   ├── state_machine.py   # Phase 전이 검증
 │   ├── prompts.py         # 에이전트별 프롬프트 빌더
-│   └── exceptions.py      # 커스텀 예외
+│   ├── exceptions.py      # 커스텀 예외
+│   ├── agents.py         # 에이전트 실행기 (AgentExecutor)
+│   ├── config.py         # 에이전트 설정 관리
+│   └── orchestrator.py   # 자동화된 파이프라인 조정자
 ├── docs/
 │   ├── CONTEXT.json       # 런타임 상태 (Single Source of Truth)
 │   ├── PRD.md             # 제품 요구사항
@@ -168,14 +231,17 @@ context-trio/
 
 ## FAQ
 
-**Q: 에이전트를 직접 호출하나요?**
-A: 아닙니다. `trio` CLI는 프롬프트를 **생성**합니다. 생성된 프롬프트를 각 에이전트의 인터페이스(API, chat 등)에 붙여넣어 사용합니다.
+**Q: `trio task`와 수동 명령의 차이점은?**
+A: `trio task`는 전체 Plan → Implement → Review 사이클을 자동으로 실행합니다. 각 단계를 개별적로 제어하려면 `trio plan`, `trio implement`, `trio review`를 사용하세요.
 
-**Q: 어떤 모델을 꼭 써야 하나요?**
+**Q: 에이전트를 직접 호출하나요?**
 A: AGENTS.md에 정의된 모델이 권장되지만, 비슷한 능력의 다른 모델로 대체할 수 있습니다.
 
 **Q: CONTEXT.json이 꼬이면 어떻게 하나요?**
 A: `trio init`을 다시 실행하면 CONTEXT.json이 없는 경우에만 새로 생성됩니다. 수동으로 수정하거나, 백업에서 복원하세요.
+
+**Q: 에이전트 설정은 어디서 하나요?**
+A: 자동화된 `trio task`를 사용하려면 `~/.config/trio/config.toml` 파일에 각 에이전트의 CLI 명령을 설정해야 합니다. 자세한 내용은 `src/trio/config.py`를 참고하세요.
 
 **Q: 기존 프로젝트에 적용할 수 있나요?**
 A: 네. `install.sh` 또는 `trio init`은 기존 파일을 덮어쓰지 않으며, 없는 파일만 생성합니다.
