@@ -36,3 +36,6 @@ Thumbs.db
 
 # Logs archive (large files)
 docs/logs/*.json
+
+# Trio runtime artifacts
+.trio/

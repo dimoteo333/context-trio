@@ -301,6 +301,145 @@ def build_prompt(
     return "\n\n---\n\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# Orchestrator prompt builders
+# ---------------------------------------------------------------------------
+
+def build_plan_prompt(description: str, ctx: ProjectContext) -> str:
+    """Build a system prompt for the Architect to generate a 3-step plan.
+
+    Args:
+        description: The user's task description.
+        ctx: Current project context.
+
+    Returns:
+        A prompt string for the planning phase.
+    """
+    context_summary = _summarize_context(ctx)
+    return dedent(f"""\
+        You are the Architect agent in a Triad Orchestration System.
+
+        Your job: Outline a concise 3-step execution plan for the task below.
+
+        For EACH step, provide:
+        1. **Title** — what this step accomplishes
+        2. **Target files** — files to create or modify
+        3. **Key changes** — specific code/config changes
+        4. **Test commands** — how to verify correctness
+
+        {context_summary}
+
+        ## Task
+        {description}
+
+        ## Output Format
+        Output a Markdown plan with exactly 3 steps. Use this structure:
+
+        # Execution Plan
+
+        ## Step 1: <title>
+        - **Target files:** file1.py, file2.py
+        - **Key changes:** Description of changes
+        - **Test commands:** `pytest tests/test_file.py`
+
+        ## Step 2: <title>
+        ...
+
+        ## Step 3: <title>
+        ...
+
+        ## Summary
+        One-line summary of the overall approach.
+
+        Be specific and actionable. Reference real file paths.
+    """)
+
+
+def build_implement_prompt(plan_text: str, ctx: ProjectContext) -> str:
+    """Build a prompt for the Implementer to execute a plan.
+
+    Args:
+        plan_text: The 3-step plan markdown.
+        ctx: Current project context.
+
+    Returns:
+        A prompt string for the implementation phase.
+    """
+    context_summary = _summarize_context(ctx)
+    return dedent(f"""\
+        You are the Implementer agent in a Triad Orchestration System.
+
+        Your job: Execute the plan below by writing code, creating files,
+        and running tests. Follow the plan step by step.
+
+        {context_summary}
+
+        ## Constraints
+        - Python 3.12+ with strict typing
+        - Use Black formatter for Python
+        - All code must have tests (pytest)
+        - No bare except blocks
+        - Follow Google Style docstrings
+
+        ## Execution Plan
+        {plan_text}
+
+        ## Instructions
+        1. Execute each step in order
+        2. Write clean, well-tested code
+        3. Run the test commands after each step
+        4. If a test fails, fix the issue before moving on
+        5. When done, provide a summary of all changes made
+    """)
+
+
+def build_review_prompt(plan_text: str, diff_text: str, ctx: ProjectContext) -> str:
+    """Build a prompt for the Auditor to review implementation.
+
+    Args:
+        plan_text: The original 3-step plan.
+        diff_text: Git diff of all changes.
+        ctx: Current project context.
+
+    Returns:
+        A prompt string for the review phase.
+    """
+    context_summary = _summarize_context(ctx)
+    return dedent(f"""\
+        You are the Auditor agent in a Triad Orchestration System.
+
+        Your job: Review the implementation against the plan and project
+        constraints. Determine if it should be APPROVED or REJECTED.
+
+        {context_summary}
+
+        ## Original Plan
+        {plan_text}
+
+        ## Changes (git diff)
+        ```diff
+        {diff_text}
+        ```
+
+        ## Review Checklist
+        1. Does the implementation match the plan?
+        2. Are there tests with adequate coverage?
+        3. Does the code follow the project constraints (typing, style, etc.)?
+        4. Are there any security concerns?
+        5. Are there any bare except blocks?
+
+        ## Output Format
+        Start your response with one of these verdicts on its own line:
+
+        VERDICT: APPROVED
+        or
+        VERDICT: REJECTED
+
+        Then provide your detailed review.
+        If rejecting, explain exactly what needs to be fixed.
+    """)
+
+
 def _build_task_section(
     role: AgentRole,
     task: TaskPacket | None,

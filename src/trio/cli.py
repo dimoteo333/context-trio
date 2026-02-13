@@ -1,20 +1,15 @@
 """Typer CLI application for the Triad Orchestration System.
 
 Commands:
+    trio task <description>  — Run full Plan → Implement → Review pipeline
     trio status              — Show current phase, task queue, recent logs
-    trio plan <request>      — Generate Architect prompt
-    trio implement [--task-id] — Generate Implementer prompt
-    trio review [--task-id]  — Generate Auditor prompt
-    trio add-task <json>     — Add a TaskPacket to the queue
     trio transition <phase>  — Manual phase transition
-    trio init                — Initialize project structure (Python alternative to install.sh)
+    trio init                — Initialize project structure
 """
 
 from __future__ import annotations
 
-import json
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -24,10 +19,11 @@ from rich.panel import Panel
 from rich.table import Table
 
 from . import __version__
+from .config import ensure_config
 from .context import ContextManager
 from .exceptions import ContextNotFoundError, TrioError
-from .prompts import build_prompt
-from .schemas import AgentRole, Phase, TaskPacket
+from .orchestrator import TaskOrchestrator
+from .schemas import AgentRole, Phase
 from .state_machine import get_active_agent, get_valid_targets
 
 app = typer.Typer(
@@ -41,6 +37,43 @@ console = Console()
 def _get_ctx_manager() -> ContextManager:
     """Return a ContextManager for the default path."""
     return ContextManager()
+
+
+# ---------------------------------------------------------------------------
+# trio task
+# ---------------------------------------------------------------------------
+
+@app.command()
+def task(
+    description: Annotated[str, typer.Argument(help="Task description to execute")],
+    no_commit: Annotated[
+        bool,
+        typer.Option("--no-commit", help="Skip auto git commit & push"),
+    ] = False,
+) -> None:
+    """Run the full Plan → Implement → Review pipeline."""
+    mgr = _get_ctx_manager()
+    try:
+        mgr.load()
+    except ContextNotFoundError:
+        console.print(
+            "[red]docs/CONTEXT.json not found.[/red] "
+            "Run [bold]trio init[/bold] to initialize."
+        )
+        raise typer.Exit(1)
+
+    config = ensure_config()
+
+    orchestrator = TaskOrchestrator(
+        config=config,
+        ctx_manager=mgr,
+        console=console,
+        no_commit=no_commit,
+    )
+
+    success = orchestrator.execute(description)
+    if not success:
+        raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -83,12 +116,12 @@ def status() -> None:
         table.add_column("Title")
         table.add_column("Priority")
         table.add_column("Depends On")
-        for task in ctx.task_queue:
+        for t in ctx.task_queue:
             table.add_row(
-                task.task_id,
-                task.title,
-                task.priority.value,
-                ", ".join(task.depends_on) or "—",
+                t.task_id,
+                t.title,
+                t.priority.value,
+                ", ".join(t.depends_on) or "—",
             )
         console.print(table)
     else:
@@ -111,119 +144,6 @@ def status() -> None:
     # Known issues
     if ctx.known_issues:
         console.print(f"\n[yellow]Known Issues:[/yellow] {len(ctx.known_issues)}")
-
-
-# ---------------------------------------------------------------------------
-# trio plan
-# ---------------------------------------------------------------------------
-
-@app.command()
-def plan(
-    request: Annotated[str, typer.Argument(help="User request to plan")],
-) -> None:
-    """Generate an Architect system prompt for the given request."""
-    mgr = _get_ctx_manager()
-    try:
-        ctx = mgr.load()
-    except ContextNotFoundError:
-        console.print("[red]docs/CONTEXT.json not found.[/red] Run [bold]trio init[/bold] first.")
-        raise typer.Exit(1)
-
-    prompt = build_prompt(
-        AgentRole.ARCHITECT,
-        ctx,
-        user_request=request,
-    )
-    console.print(Panel(prompt, title="[bold magenta]Architect Prompt[/bold magenta]"))
-
-
-# ---------------------------------------------------------------------------
-# trio implement
-# ---------------------------------------------------------------------------
-
-@app.command()
-def implement(
-    task_id: Annotated[
-        Optional[str],
-        typer.Option("--task-id", "-t", help="Task ID to implement"),
-    ] = None,
-) -> None:
-    """Generate an Implementer system prompt for a task."""
-    mgr = _get_ctx_manager()
-    try:
-        ctx = mgr.load()
-    except ContextNotFoundError:
-        console.print("[red]docs/CONTEXT.json not found.[/red]")
-        raise typer.Exit(1)
-
-    task = _find_task(ctx.task_queue, task_id)
-    if task is None:
-        if task_id:
-            console.print(f"[red]Task {task_id!r} not found in queue.[/red]")
-        else:
-            console.print("[red]No tasks in queue.[/red]")
-        raise typer.Exit(1)
-
-    prompt = build_prompt(AgentRole.IMPLEMENTER, ctx, task=task)
-    console.print(Panel(prompt, title="[bold green]Implementer Prompt[/bold green]"))
-
-
-# ---------------------------------------------------------------------------
-# trio review
-# ---------------------------------------------------------------------------
-
-@app.command()
-def review(
-    task_id: Annotated[
-        Optional[str],
-        typer.Option("--task-id", "-t", help="Task ID to review"),
-    ] = None,
-) -> None:
-    """Generate an Auditor system prompt for reviewing a task."""
-    mgr = _get_ctx_manager()
-    try:
-        ctx = mgr.load()
-    except ContextNotFoundError:
-        console.print("[red]docs/CONTEXT.json not found.[/red]")
-        raise typer.Exit(1)
-
-    task = _find_task(ctx.task_queue, task_id)
-    if task is None:
-        if task_id:
-            console.print(f"[red]Task {task_id!r} not found in queue.[/red]")
-        else:
-            console.print("[red]No tasks in queue.[/red]")
-        raise typer.Exit(1)
-
-    prompt = build_prompt(AgentRole.AUDITOR, ctx, task=task)
-    console.print(Panel(prompt, title="[bold yellow]Auditor Prompt[/bold yellow]"))
-
-
-# ---------------------------------------------------------------------------
-# trio add-task
-# ---------------------------------------------------------------------------
-
-@app.command("add-task")
-def add_task(
-    task_json: Annotated[str, typer.Argument(help="Task Packet as JSON string")],
-) -> None:
-    """Add a TaskPacket to the task queue."""
-    mgr = _get_ctx_manager()
-    try:
-        ctx = mgr.load()
-    except ContextNotFoundError:
-        console.print("[red]docs/CONTEXT.json not found.[/red]")
-        raise typer.Exit(1)
-
-    try:
-        data = json.loads(task_json)
-        task = TaskPacket.model_validate(data)
-    except (json.JSONDecodeError, Exception) as exc:
-        console.print(f"[red]Invalid task JSON:[/red] {exc}")
-        raise typer.Exit(1)
-
-    mgr.add_task(task, AgentRole.ARCHITECT)
-    console.print(f"[green]Added task {task.task_id}: {task.title}[/green]")
 
 
 # ---------------------------------------------------------------------------
@@ -347,22 +267,3 @@ def main(
     ] = None,
 ) -> None:
     """Triad Orchestration System — multi-agent AI collaboration CLI."""
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _find_task(
-    queue: list[TaskPacket],
-    task_id: str | None,
-) -> TaskPacket | None:
-    """Find a task in the queue by ID, or return the first one."""
-    if not queue:
-        return None
-    if task_id:
-        for t in queue:
-            if t.task_id == task_id:
-                return t
-        return None
-    return queue[0]
